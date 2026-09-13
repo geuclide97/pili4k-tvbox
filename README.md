@@ -53,16 +53,63 @@ https://cdn.jsdelivr.net/gh/geuclide97/pili4k-tvbox@main/config.json
 如果写成 `"api": "./pili4k.js"`（把规则当运行时），TVBox 会把规则文件当成 ESM spider 模块去 `import`，
 而规则里没有 `__jsEvalReturn` 也没有 `export default`，结果就是**配置加载成功、站点名能显示、但一个分类都没有**。
 
-同理，`lib/` 与 `js/` 的目录层级也不能改。`drpy2.min.js` 里有相对导入：
+同理，`lib/` 与 `js/` 的目录层级也不能改。`drpy2.min.js` 里有这些导入：
 
 ```js
 import cheerio from "assets://js/lib/cheerio.min.js";   // 由 App 自带
 import "assets://js/lib/crypto-js.js";                  // 由 App 自带
-import 模板 from "../js/模板.js";                        // 本仓库 js/模板.js
-import { gbkTool } from "./gbk.js";                     // 本仓库 lib/gbk.js
+import 模板 from "https://cdn.jsdelivr.net/gh/geuclide97/pili4k-tvbox@main/js/模板.js";
+import { gbkTool } from "https://cdn.jsdelivr.net/gh/geuclide97/pili4k-tvbox@main/lib/gbk.js";
 ```
 
 少任何一个文件，drpy2 模块加载失败 → 同样没有分类。
+
+## 关键：FongMi 不注入 `pdfh` / `pdfa` / `pd`（本仓库的核心修复）
+
+**这是「导入配置后一个分类都没有」的真正原因。**
+
+drpy2 在**模块顶层**就裸引用了三个函数：
+
+```js
+const defaultParser = { pdfh: pdfh, pdfa: pdfa, pd: pd };
+```
+
+`pdfh` / `pdfa` / `pd` 原本由 **TVBox 的 native 层注入**（HTML 解析原语）。
+`com.fongmi.android.tv`（影视）**不注入它们**，于是模块求值时直接抛：
+
+```
+W/System.err: com.whl.quickjs.wrapper.QuickJSException:
+    UnhandledPromiseRejectionException: 'pdfh' is not defined
+    at <anonymous> (…/lib/drpy2.min.js:73)
+    at com.fongmi.quickjs.crawler.Spider.init(…)
+    at com.fongmi.android.tv.bean.Site.spider(…)
+```
+
+`__JS_SPIDER__` 没被赋值 → spider 初始化失败 → 站点零分类。
+注意报错发生在**模块求值阶段**，不是 `init` 阶段，所以规则写得再对也没用。
+
+本仓库的做法是：在 `lib/drpy2.min.js` 的 import 块之后、drpy2 主体之前，插入一段 shim，
+用 cheerio（drpy2 自己已经引入）实现这三个函数并挂到 `globalThis`：
+
+```js
+function __drpyHostPdfh(html, parse) { /* sel1&&sel2&&…&&key */ }
+function __drpyHostPdfa(html, parse) { /* 同上，返回数组 */ }
+globalThis.pdfh = __drpyHostPdfh;
+globalThis.pdfa = __drpyHostPdfa;
+globalThis.pd   = __drpyHostPdfh;
+```
+
+选择器语法与 TVBox 一致：`"sel1&&sel2&&…&&key"`，`key` 取 `Text` / `Html` / `outerHtml` / 属性名。
+
+**故意不定义 `pdfl`**：drpy2 用 `typeof pdfl === "function"` 判定版本，定义它会切到另一条 detail
+分支（`pdfl(html,p1,list_text,list_url,MY_URL)`，签名不同），本规则不需要。
+
+补丁由仓库根目录的 `build_drpy2.py` 生成，可复核：
+
+```bash
+grep -c 'globalThis.pdfh=' lib/drpy2.min.js   # 应为 1
+grep -o 'import[^;]*' lib/drpy2.min.js        # 只应出现 assets:// 与绝对 URL
+```
 
 ## 关于 `lib/drpy2.min.js` 的来源（安全说明）
 
@@ -99,13 +146,20 @@ import 模板 from "../js/模板.js";
 import { gbkTool } from "./gbk.js";
 ```
 
-清理后文件 66707 字节，`down.nigx.cn` 引用数为 0，sha1 前 12 位 `cde9358bc0b9`。
+清理后 `down.nigx.cn` 引用数为 0。本仓库最终发布的 `lib/drpy2.min.js` 在此基础上又加了两处改动：
+
+1. `模板.js` / `gbk.js` 的相对 import（`"../js/模板.js"` / `"./gbk.js"`）换成**绝对 URL**——
+   远程模块的相对路径解析在 QuickJS 系 loader 里不可靠；
+2. 插入上述 `pdfh` / `pdfa` / `pd` shim。
+
+当前文件 69387 字节，sha1 前 12 位 `05148484711c`。
 
 **建议自行复核**：
 
 ```bash
 grep -c "down.nigx.cn" lib/drpy2.min.js   # 应为 0
-grep -o 'import[^;]*' lib/drpy2.min.js    # 只应出现 assets:// 与本地相对路径
+grep -o 'import[^;]*' lib/drpy2.min.js    # 只应出现 assets:// 与 jsdelivr 绝对 URL
+grep -c 'globalThis.pdfh=' lib/drpy2.min.js  # 应为 1
 ```
 
 ## 对原规则的改动
@@ -150,13 +204,40 @@ grep -o 'import[^;]*' lib/drpy2.min.js    # 只应出现 assets:// 与本地相�
 
 ## 已验证
 
-用 Node 加载本仓库的 `lib/drpy2.min.js` + `pili4k.js`，stub 掉 TVBox 宿主能力后实测：
+**离线（Node）**：加载本仓库的 `lib/drpy2.min.js` + `pili4k.js`，只 stub 宿主网络能力
+（`req` / `local` / `log`），**不注入 `pdfh`/`pdfa`/`pd`**，验证 shim 生效：
 
 | 调用 | 结果 |
 |---|---|
+| `globalThis.pdfh` 加载前 / 后 | `undefined` → `function` |
 | `home()` | 返回 7 个分类 + filters |
 | `category('100173','1')` | 21 条（出入平安 / 特立独行 / 蜂鸟行动 …） |
 | `search('剑来','1')` | 14 条（剑来第三季定档 / 《剑来》陈平安这身红色皮衣…） |
+
+**真机（雷电模拟器 + 影视 `com.fongmi.android.tv` v5.6.3）**：见下方「排错记录」。
+
+## 排错记录：无分类怎么查
+
+`com.fongmi.android.tv` 把 JS 错误写到 `System.err`，直接看 logcat 就能定位：
+
+```bash
+adb logcat -c
+adb shell am force-stop com.fongmi.android.tv
+adb shell monkey -p com.fongmi.android.tv -c android.intent.category.LAUNCHER 1
+adb logcat -d | grep -A5 'System.err'
+```
+
+常见结论：
+
+| 现象 | 含义 |
+|---|---|
+| `'pdfh' is not defined` at `drpy2.min.js` | 缺宿主 shim（本仓库已修） |
+| 规则文件里没有 `__jsEvalReturn` / `export default` | `api` / `ext` 写反了 |
+| `Module not found` / import 报错 | `lib/`、`js/` 文件缺失或相对路径解析失败 |
+
+站点的 `api` / `ext` 会原样出现在报错栈里（形如
+`at <anonymous> (https://cdn.jsdelivr.net/…/lib/drpy2.min.js:73)`），
+可直接确认 App 到底加载了哪个 URL。
 
 ## 已知限制
 
