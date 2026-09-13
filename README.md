@@ -9,11 +9,28 @@ TVBox 点播配置：`霹雳⚡4K` 线路。
 
 ## 快速使用
 
-TVBox 配置地址填入：
+TVBox 配置地址填入（**推荐**，跟随默认分支）：
 
 ```
-https://cdn.jsdelivr.net/gh/geuclide97/pili4k-tvbox@main/config.json
+https://cdn.jsdelivr.net/gh/geuclide97/pili4k-tvbox/config.json
 ```
+
+或使用固定版本（内容永不变化，最稳）：
+
+```
+https://cdn.jsdelivr.net/gh/geuclide97/pili4k-tvbox@6948f4f/config.json
+```
+
+> **注意：不要用 `@main` 形式。**
+> jsDelivr 对 `@main` 这类分支别名的缓存不随 `purge` 立即失效，
+> 会把**修复前**的 `lib/drpy2.min.js`（缺 `pdfh` shim，66707 字节）继续发给客户端，
+> 表现为站点依旧零分类。无 ref 形式（默认分支）与 commit SHA 形式都能拿到最新内容。
+> 校验方法：
+>
+> ```bash
+> curl -s https://cdn.jsdelivr.net/gh/geuclide97/pili4k-tvbox/lib/drpy2.min.js | grep -c 'globalThis.pdfh='
+> # 输出 1 才正确；输出 0 说明拿到的是旧缓存
+> ```
 
 或在 TVBox 内手动添加站点：
 
@@ -22,8 +39,8 @@ https://cdn.jsdelivr.net/gh/geuclide97/pili4k-tvbox@main/config.json
   "key": "pili4k",
   "name": "霹雳⚡4K",
   "type": 3,
-  "api": "https://cdn.jsdelivr.net/gh/geuclide97/pili4k-tvbox@main/lib/drpy2.min.js",
-  "ext": "https://cdn.jsdelivr.net/gh/geuclide97/pili4k-tvbox@main/pili4k.js",
+  "api": "https://cdn.jsdelivr.net/gh/geuclide97/pili4k-tvbox/lib/drpy2.min.js",
+  "ext": "https://cdn.jsdelivr.net/gh/geuclide97/pili4k-tvbox/pili4k.js",
   "searchable": 1,
   "quickSearch": 1,
   "filterable": 1,
@@ -214,7 +231,27 @@ grep -c 'globalThis.pdfh=' lib/drpy2.min.js  # 应为 1
 | `category('100173','1')` | 21 条（出入平安 / 特立独行 / 蜂鸟行动 …） |
 | `search('剑来','1')` | 14 条（剑来第三季定档 / 《剑来》陈平安这身红色皮衣…） |
 
-**真机（雷电模拟器 + 影视 `com.fongmi.android.tv` v5.6.3）**：见下方「排错记录」。
+**真机（雷电模拟器 + 影视 `com.fongmi.android.tv` v5.6.3）**：
+
+修复前 logcat 报 `'pdfh' is not defined`；修复后不再报错，App 依次拉取
+`config.json` → `lib/drpy2.min.js` → `pili4k.js`，并打印：
+
+```
+D/TV-home      │ {"class":[{"type_id":"100113","type_name":"霹雳⚡4K电视剧"},…]}   ← 7 个分类
+D/TV-homeVideo │ {"list":[{"vod_name":"斗罗大陆Ⅱ绝世唐门"},…]}
+```
+
+界面实测：
+
+| 位置 | 结果 |
+|---|---|
+| 首页 | 「更新推荐」铺满海报 |
+| 点「点播」 | 出现 7 个分类条：电视剧 / 电影 / 综艺 / 纪录片 / 动漫 / 少儿 / 短剧 |
+| 切到「电影」 | 出入平安 / 特立独行 / 蜂鸟行动 / 抓特务 / 河神之渡阴 … |
+| 打开详情 | 站源、年份、演员、简介齐全；播放源 `霹雳⚡4k❤️` / `预告` / `特辑`；剧集 `_001`–`_175` 带分页 |
+
+> **影视（FongMi）的分类入口**：首页默认只显示「最近观看 / 更新推荐」，
+> **分类条要再点一次顶部导航的「点播」才会展开**。不是配置问题。
 
 ## 排错记录：无分类怎么查
 
