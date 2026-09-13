@@ -4,10 +4,12 @@
       "key": "pili4k",
       "name": "霹雳⚡4K",
       "type": 3,
-      "api": "./pili4k.js",
+      "api": "./lib/drpy2.min.js",
+      "ext": "./pili4k.js",
       "searchable": 1,
       "quickSearch": 1,
       "filterable": 1,
+      "changeable": 1,
       "timeout": 30,
       "playerType": 0
     }

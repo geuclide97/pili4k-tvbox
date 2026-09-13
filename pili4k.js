@@ -1007,13 +1007,15 @@ var rule = {
 
         function isMainContent(title) {
             if (!title) return false;
-            if (title.includes('<em>') || title.includes('</em>')) return false;
+            // 搜索接口返回的标题带 <em> 高亮标签，先剥离再判断
+            title = title.replace(/<\/?em>/g, '');
             return !nonMainContentKeywords.some(keyword => title.includes(keyword));
         }
 
         function isQQPlatform(playSites) {
-            if (!playSites || !Array.isArray(playSites)) return true; // 如果没有平台信息，默认保留
-            return playSites.some(site => site.enName && site.enName.toLowerCase() === '霹雳⚡4k');
+            // 平台信息缺失或为空数组时保留，避免把全部结果过滤掉
+            if (!playSites || !Array.isArray(playSites) || playSites.length === 0) return true;
+            return playSites.some(site => site.enName && (site.enName.toLowerCase() === 'qq' || site.enName === '霹雳⚡4k'));
         }
 
         try {
@@ -1032,7 +1034,7 @@ var rule = {
                         if (!seenIds.has(itemId)) {
                             seenIds.add(itemId);
                             d.push({
-                                title: it.videoInfo.title,
+                                title: (it.videoInfo.title || '').replace(/<\/?em>/g, ''),
                                 img: it.videoInfo.imgUrl || "",
                                 url: itemId,
                                 desc: it.videoInfo.secondLine || ""
